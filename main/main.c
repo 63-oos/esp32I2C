@@ -24,8 +24,8 @@ esp_err_t dev_ready(int timeout_ms,int *tries)
         uint8_t status = 0;
         count++;
         esp_err_t err = i2c_master_receive(dev,&status,1,100);
-        printf("count = %d\n",count);
-        printf("I2C err = %s, status = 0x%02X\n",esp_err_to_name(err), status);
+//        printf("count = %d\n",count);
+//        printf("I2C err = %s, status = 0x%02X\n",esp_err_to_name(err), status);
         if(err==ESP_OK && status == 0x01)
         {
             if(tries)*tries = count;
@@ -40,7 +40,6 @@ esp_err_t dev_ready(int timeout_ms,int *tries)
 
 static esp_err_t pn532_read(const uint8_t* data,uint8_t len,uint8_t *resp,size_t resp_len,int* tries)
 {
-    printf("hello\n");
     uint8_t frame[32];
     uint8_t sum =0;
     frame[0] = 0x00;
@@ -62,7 +61,7 @@ static esp_err_t pn532_read(const uint8_t* data,uint8_t len,uint8_t *resp,size_t
         return err;
     }
 
-    /*wait for ack fram to read it...*/
+    //wait for ack fram to read it...
     err = dev_ready(1000,NULL);
     if(err!=ESP_OK)
     {
@@ -76,10 +75,11 @@ static esp_err_t pn532_read(const uint8_t* data,uint8_t len,uint8_t *resp,size_t
         printf("I2C err = %s\n",esp_err_to_name(err));
         return err;
     }
-    ESP_LOG_BUFFER_HEX(TAG,ack,sizeof(ack));
+//    printf("ack frame...\n");
+//    ESP_LOG_BUFFER_HEX(TAG,ack,sizeof(ack));
     
     
-    /*wait for response frame and read it...*/
+    //wait for response frame and read it...
     err = dev_ready(1000,tries);
     if(err!=ESP_OK)
     {
@@ -93,7 +93,7 @@ static esp_err_t pn532_read(const uint8_t* data,uint8_t len,uint8_t *resp,size_t
         return err;
     }
 
-    /*A valid reply has D5 and (command +1) after the frame header*/
+    // A valid reply has D5 and (command +1) after the frame header
     if(resp[6] != 0xD5 || resp[7]!=(uint8_t)(data[1]+1))
     {
         printf("ESP_ERR_INVALID_RESPONSE\n");
@@ -134,7 +134,7 @@ void app_main(void)
             found++;
         }        
     }
-    uint8_t resp[14];
+    uint8_t resp[32];
     esp_err_t err;
 
     const uint8_t cmd[] = {0xD4,0x02};
@@ -142,8 +142,76 @@ void app_main(void)
     err = pn532_read(cmd,sizeof(cmd),resp,sizeof(resp),NULL);
     if(err!=ESP_OK)
     {
-        printf("something wrong...\n");
+        printf("[I2C] err = %s\n",esp_err_to_name(err));
     }
+//    printf("Response\n");
     ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
+
+
+//  SAMconfiguration 
+    const uint8_t sam[] = {0xD4,0x14,0x01,0x14,0x01};
+    err = pn532_read(sam,sizeof(sam),resp,sizeof(resp),NULL);
+    if(err!=ESP_OK)
+    {
+        printf("[I2C] err : %s\n",esp_err_to_name(err));
+        ESP_LOGE(TAG,"Setup failed, stoping. Check wiring and mode switches.");
+        return;
+    }
+//    printf("samconfig resp\n");
+
+//    ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
+
+//  rfconfiguration
+    const uint8_t rfcg[] = {0xD4,0x32,0x05,0xFF,0X01,0x00};
+    err = pn532_read(rfcg,sizeof(rfcg),resp,sizeof(resp),NULL);
+    if(err!=ESP_OK)
+    {
+        printf("[I2C] err : %s\n",esp_err_to_name(err));
+    }
+    ESP_LOGI(TAG,"RFConfiguration : %s\n",esp_err_to_name(err));
+    ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
+
+    const uint8_t scan[] = {0xD4,0x4A,0x01,0x00};
+    bool card_status = true;
+
+    while(1)
+    {
+        int tries = 0;
+        err = pn532_read(scan,sizeof(scan),resp,sizeof(resp),&tries);
+        if(err!=ESP_OK)
+        {
+            printf("[I2C] err: %s\n",esp_err_to_name(err));
+        }
+//        ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
+        if(err == ESP_OK && resp[8]>=1)
+        {
+            printf("card detected....\n");
+            uint8_t uid_len = resp[13];
+            printf("The lenght of the UID is %d\n",uid_len);
+            if(!card_status)
+            {
+                char uid_str[40] = "";
+                for(int i=0;i<uid_len;i++)
+                {
+                    char part[4];
+                    snprintf(part,sizeof(part),"%02x%s",resp[14+i],(i<uid_len-1)?":":"");
+                    strcat(uid_str,part);
+                }
+                printf("[Card Detected]: UID : %s (%d Bytes)\n",uid_str,uid_len);
+                card_status = !card_status;
+            }
+            
+        }
+        else if(err == ESP_OK)
+        {
+            if(card_status)
+            {
+                card_status = !card_status;
+                printf("no card detected...\n");
+            }
+        }
+//        printf("tires: %d\n",tries);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 
 }
