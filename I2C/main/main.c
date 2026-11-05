@@ -145,7 +145,8 @@ void app_main(void)
         printf("[I2C] err = %s\n",esp_err_to_name(err));
     }
 //    printf("Response\n");
-    ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
+    ESP_LOGI(TAG,"command response : %s\n",esp_err_to_name(err));
+//    ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
 
 
 //  SAMconfiguration 
@@ -157,6 +158,7 @@ void app_main(void)
         ESP_LOGE(TAG,"Setup failed, stoping. Check wiring and mode switches.");
         return;
     }
+    ESP_LOGI(TAG,"SAMConfiguration : %s",esp_err_to_name(err));
 //    printf("samconfig resp\n");
 
 //    ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
@@ -168,10 +170,11 @@ void app_main(void)
     {
         printf("[I2C] err : %s\n",esp_err_to_name(err));
     }
-    ESP_LOGI(TAG,"RFConfiguration : %s\n",esp_err_to_name(err));
-    ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
+    ESP_LOGI(TAG,"RFConfiguration : %s",esp_err_to_name(err));
+//    ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
 
     const uint8_t scan[] = {0xD4,0x4A,0x01,0x00};
+    const uint8_t read_page[] = {0xD4, 0x40, 0x01, 0x30, 0x04};
     bool card_status = true;
 
     while(1)
@@ -185,7 +188,7 @@ void app_main(void)
 //        ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
         if(err == ESP_OK && resp[8]>=1)
         {
-            printf("card detected....\n");
+//            printf("card detected....\n");
             uint8_t uid_len = resp[13];
             printf("The lenght of the UID is %d\n",uid_len);
             if(!card_status)
@@ -197,7 +200,14 @@ void app_main(void)
                     snprintf(part,sizeof(part),"%02x%s",resp[14+i],(i<uid_len-1)?":":"");
                     strcat(uid_str,part);
                 }
-                printf("[Card Detected]: UID : %s (%d Bytes)\n",uid_str,uid_len);
+                printf("[Card Detected]: UID : %s (%d Bytes)  ATQA = %02x%02x  SAK =%02x polls = %d\n",uid_str,uid_len,resp[10],resp[11],resp[12],tries);
+                err = pn532_read(read_page,sizeof(read_page),resp,sizeof(resp),&tries);
+                if(err!=ESP_OK)
+                {
+                    printf(TAG,esp_err_to_name(err));
+                }
+                ESP_LOGI(TAG,"Read page response : %s",esp_err_to_name(err));
+                ESP_LOG_BUFFER_HEX(TAG,resp,sizeof(resp));
                 card_status = !card_status;
             }
             
