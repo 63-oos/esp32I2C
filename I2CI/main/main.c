@@ -1,26 +1,34 @@
 #include<stdio.h>
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.H"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #define I2C_SDA         GPIO_NUM_6
 #define I2C_SCL         GPIO_NUM_7
 #define I2C_IRQ         GPIO_NUM_4
 #define PN532_addr      0x24
 
-static volatile int fall_count = 0;
+static SemaphoreHandle_t irq_sem;
+
 static const char* TAG = "I2C_intr";
 
 static void IRAM_ATTR irq_isr(void *arg)
 {
-    fall_count++;
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(irq_sem,&woken);
+    portYIELD_FROM_ISR(woken);
 }
 
 
 void app_main()
 {
+
+    irq_sem = xSemaphoreCreateBinary();
+
     gpio_config_t irq_cfg = {
                         .pin_bit_mask = 1ULL<<I2C_IRQ,
                         .mode = GPIO_MODE_INPUT,
@@ -51,8 +59,10 @@ void app_main()
     i2c_master_dev_handle_t dev;
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus,&dev_cfg,&dev));
 
+
+    //samconfiguration so the irq pin is enabled 
     uint8_t ack[7],resp[10];
-    uint8_t sam[] = {0x00,0x00,0xff,0x05,0xfb,0xd4,0x14,0x01,0x14,0x01};
+    uint8_t sam[] = {0x00,0x00,0xff,0x05,0xfb,0xd4,0x14,0x01,0x14,0x01,0x02,0x00};
     i2c_master_transmit(dev,sam,sizeof(sam),100);
     vTaskDelay(pdMS_TO_TICKS(20));
     i2c_master_receive(dev,ack,sizeof(ack),100);
@@ -61,27 +71,48 @@ void app_main()
     vTaskDelay(pdMS_TO_TICKS(20));
 
 
-    const uint8_t cmd[] = {0x00,0x00,0xFF,0x02,0xFE,0xD4,0x02,0x2A,0x00};
-    uint8_t fw_ack[7],fw_resp[14];
+    
 
     while(1)
     {
-        fall_count = 0;
+        const uint8_t cmd[] = {0x00,0x00,0xFF,0x02,0xFE,0xD4,0x02,0x2A,0x00};
+        uint8_t fw_ack[7],fw_resp[14];
         ESP_LOGI(TAG,"-----new round------");
-        ESP_LOGI(TAG,"idle                  : fall so far = %d",fall_count);
 
-        i2c_master_transmit(dev,cmd,sizeof(cmd),100);
-        vTaskDelay(pdMS_TO_TICKS(20));
-        ESP_LOGI(TAG,"command send          : fall so far = %d",fall_count);
 
+        //throw away the old bell so only the new bell rang.........................
+        xSemaphoreTake(irq_sem,0);
+
+        esp_err_t err = i2c_master_transmit(dev,cmd,sizeof(cmd),100);
+        int64_t t0 = esp_timer_get_time();
+        ESP_LOGI(TAG,"transmit:%s",esp_err_to_name(err));
+
+
+        //sleep until ack ready......................................................
+        if(xSemaphoreTake(irq_sem,pdMS_TO_TICKS(100))==pdTRUE)
+        {
+            ESP_LOGI(TAG,"bell 1 (ACK ready)            after %lldus",esp_timer_get_time()-t0);
+        }
+        else
+        {
+            ESP_LOGW(TAG,"bell 1 never rang");
+        }
         i2c_master_receive(dev,fw_ack,sizeof(fw_ack),100);
-        vTaskDelay(pdMS_TO_TICKS(20));
-        ESP_LOGI(TAG,"ack read              : fall so far= %d",fall_count);
 
+        
+        // sleep until response ready.................................................
+        if(xSemaphoreTake(irq_sem,pdMS_TO_TICKS(100))==pdTRUE)
+        {
+            ESP_LOGI(TAG,"bell 2 (response ready)       after %lldus",esp_timer_get_time()-t0);
+        }
+        else
+        {
+            ESP_LOGW(TAG,"bell 2 never rang");
+        }
         i2c_master_receive(dev,fw_resp,sizeof(fw_resp),100);
-        vTaskDelay(pdMS_TO_TICKS(20));
-        ESP_LOGI(TAG,"response read         : fall so far= %d",fall_count);
 
+        ESP_LOGI(TAG,"firmware version %d.%d",fw_resp[9],fw_resp[10]);
         vTaskDelay(pdMS_TO_TICKS(3000));
+
     }
 }
