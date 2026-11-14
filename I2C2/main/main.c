@@ -24,6 +24,13 @@ static esp_err_t reg_read(uint16_t reg,uint8_t *buf,size_t len)
     return err;
 }
 
+static esp_err_t reg_write(uint16_t reg,uint64_t value)
+{
+    uint8_t buf[3]= {reg>>8,reg&0xff,value};
+    esp_err_t err = i2c_master_transmit(vl53,buf,sizeof(buf),100);
+    return err;
+}
+
 void app_main()
 {
     i2c_master_bus_handle_t bus;
@@ -66,7 +73,15 @@ void app_main()
             ESP_LOGI(TAG,"FOUND DEVICE 0x%02x",addr);
         }
     }
-    while(1)
+    uint8_t original,flipped,restored;
+    ESP_ERROR_CHECK(reg_read(0x0030,&original,1));
+    ESP_ERROR_CHECK(reg_write(0x0030,original^0x10));
+    ESP_ERROR_CHECK(reg_read(0x0030,&flipped,1));
+    ESP_ERROR_CHECK(reg_write(0x0030,original));
+    ESP_ERROR_CHECK(reg_read(0x0030,&restored,1));
+
+    printf("0x0030: orginal = %02x  |   after flipping bit 4 = %02x |   after restoring = %02x\n",original,flipped,restored);
+/*    while(1)
     {
         uint8_t id[2] = {0,0};
         uint8_t boot = 0;
@@ -78,6 +93,6 @@ void app_main()
         printf("err = %s\n",esp_err_to_name(err));
         printf("boot = %02x\n",boot);
         vTaskDelay(pdMS_TO_TICKS(2000));
-    }
+    }*/
 
 }
